@@ -13,10 +13,9 @@ This project describes a type-safe, allocation-conscious firmware architecture f
   - [STM32F446RE Board Pinout Reference](#stm32f446re-board-pinout-reference)
     - [CN5 Digital Header](#cn5-digital-header)
     - [CN6 Power Header](#cn6-power-header)
-    - [CN7 Morpho Header](#cn7-morpho-header)
+    - [CN7 and CN10 Morpho Headers](#cn7-and-cn10-morpho-headers)
     - [CN8 Analog Header](#cn8-analog-header)
     - [CN9 Digital Header](#cn9-digital-header)
-    - [CN10 Morpho Header](#cn10-morpho-header)
 - [Firmware Architecture](#firmware-architecture)
 - [C++20 Trade-offs for Embedded Firmware](#c20-trade-offs-for-embedded-firmware)
 
@@ -24,14 +23,14 @@ This project describes a type-safe, allocation-conscious firmware architecture f
 
 ### System Goal
 
-The planned system uses an ultrasonic sensor to measure distance, a ULN2003 driver and stepper motor to move a tray, an SG90 servo to drop or flag items, and a MAX7219 LED matrix to display state and telemetry. These components are coordinated by a hierarchical finite state machine (HFSM).
+The planned system uses an HC-SR501 PIR motion sensor, a ULN2003 driver and stepper motor to move a tray, an SG90 servo to drop or flag items, and a MAX7219 LED matrix to display state and telemetry. These components are coordinated by a hierarchical finite state machine (HFSM).
 
 ### Design Objectives
 
 1. **Avoid dynamic allocation:** Do not use heap allocation (`new`/`malloc`) or dynamically allocating containers such as `std::vector` and `std::string`.
 2. **Use C++20 hardware abstractions:** Apply compile-time type safety, `std::string_view`, concepts/type traits, `constexpr`, and strongly typed enums where appropriate.
 3. **Use event-driven state transitions:** Organize behavior into states such as `Idle`, `Scanning`, `Processing`, and `Fault`.
-4. **Integrate peripheral interfaces:** Use SPI for the MAX7219, timer PWM for the servo, and GPIO/timer input capture or EXTI for sensors and buttons.
+4. **Integrate peripheral interfaces:** Use SPI for the MAX7219, timer PWM for the servo, and GPIO/EXTI for the motion sensor and buttons.
 
 ## Hardware Connections and Pinouts
 
@@ -49,14 +48,13 @@ The STM32F446RE uses 3.3 V logic. Motors, the LED matrix, and sensors may need a
 | CS | PB6 (GPIO output) | Chip select, toggled by firmware. |
 | CLK | PA5 (SPI1_SCK) | SPI clock. |
 
-#### HC-SR04 Ultrasonic Sensor
+#### HC-SR501 PIR Motion Sensor
 
-| Sensor pin | Connect to | Notes |
+| Sensor pin | Connect to | Board header position |
 | --- | --- | --- |
-| VCC | 5 V supply | Check the sensor module's supply requirements. |
-| GND | Common ground | Connect to STM32 and external-supply ground. |
-| Echo | PA8, through a resistor divider | Echo is 5 V; reduce it to a 3.3 V-safe level first. |
-| Trigger | Not assigned here | Select and document a GPIO output before wiring this signal. |
+| VCC | 5 V power module rail | — |
+| GND | Ground rail (common ground) | — |
+| OUT | PA8 | CN9 pin 8 or CN10 pin 23 |
 
 #### SG90 Servo Motor
 
@@ -89,11 +87,11 @@ The STM32F446RE uses 3.3 V logic. Motors, the LED matrix, and sensors may need a
 
 - Use a suitable external supply for the LED matrix and motors; do not draw motor current from the STM32 3.3 V rail.
 - Connect all grounds together so the signal references are shared.
-- **Protect the STM32 input from the HC-SR04 Echo signal.** Echo is 5 V, but PA8 is a 3.3 V input. A divider with 1 kΩ between Echo and PA8 and 2 kΩ between PA8 and ground produces approximately 3.3 V from a 5 V signal. Confirm the divider and voltage levels before powering the circuit.
+- **Check the HC-SR501 output logic level.** PA8 is a 3.3 V input. Confirm the sensor module's OUT signal is 3.3 V-safe before connecting it.
 
 ### STM32F446RE Board Pinout Reference
 
-Each header is listed independently. Pin numbers identify the board's physical header positions.
+Pin numbers identify the board's physical header positions. CN7 and CN10 are shown side by side below; the other headers have separate tables.
 
 #### CN5 Digital Header
 
@@ -123,48 +121,36 @@ Each header is listed independently. Pin numbers identify the board's physical h
 | 7 | GND | Ground |
 | 8 | VIN | External input voltage (7–12 V) |
 
-#### CN7 Morpho Header
+#### CN7 and CN10 Morpho Headers
 
-| Pin | Signal |
-| ---: | --- |
-| 1 | PC10 |
-| 2 | PC11 |
-| 3 | PC12 |
-| 4 | PD2 |
-| 5 | VDD |
-| 6 | E5V |
-| 7 | BOOT0 |
-| 8 | GND |
-| 9 | NC |
-| 10 | NC |
-| 11 | NC |
-| 12 | IOREF |
-| 13 | NRST |
-| 14 | RESET |
-| 15 | 3V3 |
-| 16 | 3V3 |
-| 17 | 5V |
-| 18 | 5V |
-| 19 | GND |
-| 20 | GND |
-| 21 | GND |
-| 22 | GND |
-| 23 | VIN |
-| 24 | NC |
-| 25 | NC |
-| 26 | PA0 |
-| 27 | PA1 |
-| 28 | PA4 |
-| 29 | PA4 |
-| 30 | PB0 |
-| 31 | PB0 |
-| 32 | PC1 |
-| 33 | PC1 |
-| 34 | PC0 |
-| 35 | PC0 |
-| 36 | PD2 |
-| 37 | PD2 |
-| 38 | PH0 |
+The rows pair adjacent pin numbers on each connector. CN7 and CN10 are shown next to each other for easier comparison.
+
+```text
+CN7 (Left Morpho Header)                               CN10 (Right Morpho Header)
++--------------------------------------+    +--------------------------------------+
+|  1: PC10               2: PC11       |    |  1: PC9                2: PC8        |
+|  3: PC12               4: PD2        |    |  3: PB8                4: PC6        |
+|  5: VDD                6: E5V        |    |  5: PB9                6: PC5        |
+|  7: BOOT0              8: GND        |    |  7: AVDD               8: U5V        |
+|  9: NC                10: NC         |    |  9: GND               10: NC         |
+| 11: NC                12: IOREF      |    | 11: PA5               12: PA12       |
+| 13: PA13*             14: NRST       |    | 13: PA6               14: PA11       |
+| 15: PA14*             16: +3V3       |    | 15: PA7               16: PB12       |
+| 17: PA15              18: +5V        |    | 17: PB6               18: PB11       |
+| 19: GND               20: GND        |    | 19: PC7               20: GND        |
+| 21: PB7               22: GND        |    | 21: PA9               22: PB2        |
+| 23: PC13 [USER]       24: VIN        |    | 23: PA8 [PIR OUT]     24: PB1        |
+| 25: PC14              26: NC         |    | 25: PB10              26: PB15       |
+| 27: PC15              28: PA0        |    | 27: PB4               28: PB14       |
+| 29: PH0               30: PA1        |    | 29: PB5               30: PB13       |
+| 31: PH1               32: PA4        |    | 31: PB3               32: AGND       |
+| 33: VBAT              34: PB0 [PWM]  |    | 33: PA10              34: PC4        |
+| 35: PC2 [IN3]         36: PC1 [IN2]  |    | 35: PA2               36: NC         |
+| 37: PC3 [IN4]         38: PC0 [IN1]  |    | 37: PA3               38: NC         |
++--------------------------------------+    +--------------------------------------+
+```
+
+`*` PA13 and PA14 are SWD debug pins. The HC-SR501 OUT signal connects to PA8, available at CN10 pin 23 or CN9 pin 8.
 
 #### CN8 Analog Header
 
@@ -190,49 +176,6 @@ Each header is listed independently. Pin numbers identify the board's physical h
 | 7 | D6 | PB10 (TIM2_CH3) |
 | 8 | D7 | PA8 |
 
-#### CN10 Morpho Header
-
-| Pin | Signal |
-| ---: | --- |
-| 1 | PC9 |
-| 2 | PC8 |
-| 3 | PB8 |
-| 4 | PC6 |
-| 5 | PB9 |
-| 6 | PC5 |
-| 7 | AVDD |
-| 8 | U5V |
-| 9 | GND |
-| 10 | NC |
-| 11 | PA5 |
-| 12 | PA12 |
-| 13 | PA6 |
-| 14 | PA11 |
-| 15 | PA7 |
-| 16 | PB12 |
-| 17 | PB6 |
-| 18 | PB11 |
-| 19 | PC7 |
-| 20 | GND |
-| 21 | PA9 |
-| 22 | PB2 |
-| 23 | PA8 |
-| 24 | PB1 |
-| 25 | PB10 |
-| 26 | PB15 |
-| 27 | PB4 |
-| 28 | PB14 |
-| 29 | PB5 |
-| 30 | PB13 |
-| 31 | PB3 |
-| 32 | AGND |
-| 33 | PA10 |
-| 34 | PC4 |
-| 35 | PA2 |
-| 36 | NC |
-| 37 | PA3 |
-| 38 | NC |
-
 ## Firmware Architecture
 
 The firmware is organized around interface-based hardware access and a value-based state machine, rather than procedural `switch` statements tied directly to hardware.
@@ -251,7 +194,7 @@ Application Layer
 ```
 
 1. **C++ hardware abstractions (`Drivers/cxx_hal/`):** Header-only interfaces such as `IGpio`, `ISpi`, and `IPwm` decouple application logic from hardware details and allow host-side tests with mocks.
-2. **Device drivers (`Drivers/devices/`):** Concrete device logic for the MAX7219 display, ultrasonic sensor, and stepper motor.
+2. **Device drivers (`Drivers/devices/`):** Concrete device logic for the MAX7219 display, HC-SR501 motion sensor, and stepper motor.
 3. **State machine (`Middleware/fsm/`):** Uses `std::variant` and `std::visit` for type-safe state representation and transitions without requiring dynamic allocation.
 4. **Application (`Application/`):** Coordinates the conveyor workflow and its hardware abstractions.
 
