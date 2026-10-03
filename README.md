@@ -10,6 +10,7 @@ This project describes a type-safe, allocation-conscious firmware architecture f
 - [Hardware Connections and Pinouts](#hardware-connections-and-pinouts)
   - [Component-by-Component Wiring](#component-by-component-wiring)
   - [Power and Logic-Level Notes](#power-and-logic-level-notes)
+  - [Safe Power Distribution Setup](#safe-power-distribution-setup)
   - [STM32F446RE Board Pinout Reference](#stm32f446re-board-pinout-reference)
     - [CN5 Digital Header](#cn5-digital-header)
     - [CN6 Power Header](#cn6-power-header)
@@ -17,6 +18,8 @@ This project describes a type-safe, allocation-conscious firmware architecture f
     - [CN8 Analog Header](#cn8-analog-header)
     - [CN9 Digital Header](#cn9-digital-header)
 - [Firmware Architecture](#firmware-architecture)
+  - [Architecture Layers](#architecture-layers)
+  - [Testing and Hardware Binding](#testing-and-hardware-binding)
 - [C++20 Trade-offs for Embedded Firmware](#c20-trade-offs-for-embedded-firmware)
 
 ## Project Overview
@@ -88,6 +91,47 @@ The STM32F446RE uses 3.3 V logic. Motors, the LED matrix, and sensors may need a
 - Use a suitable external supply for the LED matrix and motors; do not draw motor current from the STM32 3.3 V rail.
 - Connect all grounds together so the signal references are shared.
 - **Check the HC-SR501 output logic level.** PA8 is a 3.3 V input. Confirm the sensor module's OUT signal is 3.3 V-safe before connecting it.
+
+### Safe Power Distribution Setup
+
+Use a dual-rail breadboard supply module to distribute power from a DC source supported by the module. Set the module's jumpers to the required output voltages before connecting any components.
+
+```text
+ DC source (within module input rating)
+                  |
+                  v
+       +----------------------+
+       | Breadboard power     |
+       | supply module        |
+       +----------+-----------+
+                  |
+          +-------+-------+
+          |               |
+          v               v
+    +-----------+   +-----------+
+    | 5 V rail  |   | 3.3 V rail|
+    +-----+-----+   +-----+-----+
+          |               |
+   +------+------+   Optional devices
+   |      |      |   rated for 3.3 V
+   v      v      v
+ SG90  ULN2003 MAX7219
+          |
+          +---- HC-SR501
+
+ Module GND rail ------ STM32 Nucleo GND
+       |        |          |
+      SG90    ULN2003   MAX7219 / HC-SR501
+```
+
+#### Power Distribution Rules
+
+- **Verify the supply and current budget.** Confirm that the external source and power module support the combined load, including motor startup or stall current. Do not assume a 9 V, 1 A source is sufficient for every setup.
+- **Set and verify rail voltages first.** Configure the module jumpers for 5 V and, if needed, 3.3 V before connecting the board or peripherals. Follow the power module's documentation.
+- **Use 5 V for the listed loads.** The SG90, ULN2003/stepper assembly, MAX7219, and HC-SR501 VCC connect to the 5 V rail as shown in the component wiring tables.
+- **Share ground.** Connect the module's GND rail to a Nucleo GND pin and to each peripheral ground so all signal voltages have a common reference.
+- **Keep GPIO signals separate from load power.** STM32 GPIO/PWM pins carry control signals; motor and servo power comes from the external supply, not from an MCU GPIO pin.
+- **Protect 3.3 V inputs.** Check peripheral output-high voltage before connecting it to an STM32 input. Confirm the HC-SR501 OUT is safe for PA8, and never connect the 5 V rail to the STM32 3.3 V rail.
 
 ### STM32F446RE Board Pinout Reference
 
@@ -178,25 +222,41 @@ CN7 (Left Morpho Header)                               CN10 (Right Morpho Header
 
 ## Firmware Architecture
 
-The firmware is organized around interface-based hardware access and a value-based state machine, rather than procedural `switch` statements tied directly to hardware.
+The firmware separates application behavior from hardware access. The application coordinates the conveyor workflow through a value-based state machine, hardware abstraction interfaces, and concrete STM32 drivers.
 
 ```text
-Application Layer
-└── Conveyor System FSM Controller
-    └── Abstraction Layer
-        ├── cxx_hal::IGpio
-        ├── cxx_hal::ISpi
-        └── cxx_hal::IPwm
-            └── Hardware Drivers (STM32 LL/HAL)
-                ├── Stm32GpioDriver
-                ├── Stm32SpiDriver
-                └── Stm32PwmDriver
+┌─────────────────────────────────────────────────────────────────┐
+│                      Application Layer                          │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │              Conveyor System FSM Controller             │   │
+│   └────────────────────────────┬────────────────────────────┘   │
+└────────────────────────────────┼────────────────────────────────┘
+                                 │
+┌────────────────────────────────▼────────────────────────────────┐
+│                       Abstraction Layer                         │
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │   cxx_hal::IGpio    │  cxx_hal::ISpi   │ cxx_hal::IPwm  │   │
+│   └──────────┬─────────────────┬──────────────────┬─────────┘   │
+└──────────────┼─────────────────┼──────────────────┼─────────────┘
+               │                 │                  │
+┌──────────────▼─────────────────▼──────────────────▼─────────────┐
+│                    Hardware Drivers (LL/HAL)                    │
+│   ┌─────────────────┐ ┌──────────────────┐ ┌────────────────┐   │
+│   │ Stm32GpioDriver │ │  Stm32SpiDriver  │ │ Stm32PwmDriver │   │
+│   └─────────────────┘ └──────────────────┘ └────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-1. **C++ hardware abstractions (`Drivers/cxx_hal/`):** Header-only interfaces such as `IGpio`, `ISpi`, and `IPwm` decouple application logic from hardware details and allow host-side tests with mocks.
-2. **Device drivers (`Drivers/devices/`):** Concrete device logic for the MAX7219 display, HC-SR501 motion sensor, and stepper motor.
-3. **State machine (`Middleware/fsm/`):** Uses `std::variant` and `std::visit` for type-safe state representation and transitions without requiring dynamic allocation.
-4. **Application (`Application/`):** Coordinates the conveyor workflow and its hardware abstractions.
+### Architecture Layers
+
+1. **Application (`Application/`):** `ConveyorController` coordinates the system workflow and uses the state machine and device interfaces.
+2. **State machine (`Middleware/fsm/`):** `StateMachine`, `States`, and `Events` represent states and transitions using `std::variant` and `std::visit`.
+3. **Device drivers (`Drivers/devices/`):** Encapsulate device-specific behavior for the system's display, motion sensor, and stepper motor.
+4. **Hardware interfaces (`Drivers/cxx_hal/`):** Header-only interfaces such as `IGpio`, `ISpi`, and `IPwm` decouple device/application code from the underlying STM32 peripheral implementation.
+
+### Testing and Hardware Binding
+
+The interfaces can be implemented by host-side mocks for testing without physical hardware. Target-specific implementations bind the interfaces to the STM32 HAL or low-layer (LL) APIs.
 
 ## C++20 Trade-offs for Embedded Firmware
 
