@@ -1,24 +1,52 @@
 # Build directories
 build/
+Build/
+build_tests/
 bin/
 out/
+obj/
+objdir/
 .cache/
+coverage/
 
-# Compiled Objects & Executables
+# Generated artifacts and binaries
 *.o
 *.obj
+*.a
+*.so
+*.so.*
+*.dll
+*.dylib
 *.elf
 *.bin
 *.hex
 *.map
 *.d
+*.lst
+*.out
+*.log
+*.tmp
+*.temp
+*.pid
 
-# CMake generated files
+# CMake / compiler-generated files
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
+CTestTestfile.cmake
 Makefile
+!/Makefile
 compile_commands.json
+Testing/
+
+# Dynamic test and debug artifacts
+*.gcda
+*.gcno
+*.gcov
+*.profraw
+*.coverage
+coverage.xml
+lcov.info
 
 # IDEs and Editors
 .vscode/
@@ -32,3 +60,14 @@ compile_commands.json
 .ninja_*
 ninja.build
 rules.ninja
+
+# Local tool outputs
+.cache/
+*.orig
+*.rej
+
+# Firmware / linker output
+*.axf
+*.srec
+*.mot
+*.hex

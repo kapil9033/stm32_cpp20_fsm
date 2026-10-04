@@ -17,6 +17,7 @@ This project describes a type-safe, allocation-conscious firmware architecture f
     - [CN7 and CN10 Morpho Headers](#cn7-and-cn10-morpho-headers)
     - [CN8 Analog Header](#cn8-analog-header)
     - [CN9 Digital Header](#cn9-digital-header)
+- [Build, Clean, and Flash](#build-clean-and-flash)
 - [Firmware Architecture](#firmware-architecture)
   - [Architecture Layers](#architecture-layers)
   - [Testing and Hardware Binding](#testing-and-hardware-binding)
@@ -91,6 +92,23 @@ The STM32F446RE uses 3.3 V logic. Motors, the LED matrix, and sensors may need a
 - Use a suitable external supply for the LED matrix and motors; do not draw motor current from the STM32 3.3 V rail.
 - Connect all grounds together so the signal references are shared.
 - **Check the HC-SR501 output logic level.** PA8 is a 3.3 V input. Confirm the sensor module's OUT signal is 3.3 V-safe before connecting it.
+
+### Testing the HC-SR501
+
+The firmware polls PA8 every 20 ms. On the Nucleo board, PA8 is CN9's D7 pin. The display behavior has separate startup and sensor-test phases:
+
+1. **Startup/demo phase (on firmware builds that include the icon animation):** the matrix cycles through several icons. This is only a display demo; it does not indicate motion. The current PIR-test source does not include this animation, so seeing it means the board is running a build that still has the startup demo.
+2. **Idle:** after the demo finishes, the matrix shows a small smile while the PIR's OUT signal is LOW.
+3. **Motion detected:** when OUT goes HIGH, the matrix changes to a square/box border (the scanning pattern).
+4. **Motion cleared:** when OUT returns LOW, the matrix changes back to the smile. The PIR module's hold-time setting determines how long OUT stays HIGH after detection.
+
+If the icon demo keeps repeating and never settles on the smile, flash the current PIR-test firmware; the current source starts in idle without the icon demo. If it shows the smile but never the box border during motion, check that OUT is actually going HIGH at PA8.
+
+For a useful visual test, the MAX7219 must also be connected and working. The servo does not need to be connected: the target PWM driver is currently a stub, so **do not expect servo movement**. The firmware also does not print sensor readings to a serial console or blink a dedicated status LED; the matrix pattern is the test indication.
+
+After powering the PIR, allow about 30–60 seconds for it to stabilize. Keep still and observe the idle pattern, then walk across its field of view and look for the scanning pattern. If the pattern does not change, measure OUT relative to common ground: it should be LOW without detected motion and HIGH during detection/hold time. Check that sensor ground is shared with the Nucleo, that the correct board pin (CN9 D7 / PA8) is used, and that OUT's voltage is safe for the STM32's 3.3 V input. Use a level shifter if needed; do not connect a 5 V signal directly to PA8.
+
+Build and flash the current firmware using the commands in [Build, Clean, and Flash](#build-clean-and-flash).
 
 ### Safe Power Distribution Setup
 
@@ -220,6 +238,31 @@ CN7 (Left Morpho Header)                               CN10 (Right Morpho Header
 | 7 | D6 | PB10 (TIM2_CH3) |
 | 8 | D7 | PA8 |
 
+## Build, Clean, and Flash
+
+Run these commands from the repository root. Optionally clean previous build outputs first, then build the firmware with CMake:
+
+```sh
+make clean
+cmake --build build --parallel
+```
+
+Copy the generated binary and ELF file to the Raspberry Pi root filesystem exported over NFS:
+
+```sh
+sudo cp build/stm32_cpp20_fsm.bin /srv/nfs/rpi-rootfs/home/
+sudo cp build/stm32_cpp20_fsm.elf /srv/nfs/rpi-rootfs/home/
+```
+
+On the Raspberry Pi, flash the binary through OpenOCD. This assumes OpenOCD is installed there and `board/st_nucleo_f4.cfg` is available in its board configuration search path:
+
+```sh
+openocd -f board/st_nucleo_f4.cfg \
+  -c "init" -c "reset halt" \
+  -c "flash write_image erase /home/stm32_cpp20_fsm.bin 0x08000000 bin" \
+  -c "reset run" -c "shutdown"
+```
+
 ## Firmware Architecture
 
 The firmware separates application behavior from hardware access. The application coordinates the conveyor workflow through a value-based state machine, hardware abstraction interfaces, and concrete STM32 drivers.
@@ -266,3 +309,10 @@ The interfaces can be implemented by host-side mocks for testing without physica
 | **Type safety:** Strongly typed enums and types can prevent subtle register-assignment mistakes. | **Toolchain integration:** STM32CubeMX generates C code, so a modern C++ project may need deliberate integration and organization. |
 | **Clearer architecture:** Interfaces, RAII, and encapsulation help reduce global state. | **Code-size risk:** Some template use and runtime features can increase binary size. |
 | **Host-side testing:** Interfaces make it possible to mock hardware and test state-machine logic on a development machine. | **Embedded constraints:** Features such as `std::function` and `std::vector` may allocate dynamically and should be avoided where heap use is prohibited. |
+
+
+
+openocd -f board/st_nucleo_f4.cfg \
+  -c "init" -c "reset halt" \
+  -c "flash write_image erase /home/stm32_cpp20_fsm.bin 0x08000000 bin" \
+  -c "reset run" -c "shutdown"
